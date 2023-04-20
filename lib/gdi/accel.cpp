@@ -14,6 +14,8 @@
 
 // #define ACCEL_DEBUG
 
+gAccel *gAccel::instance;
+
 #ifdef HAVE_HISILICON_ACCEL 
 extern int  dinobot_accel_init(void);
 extern void dinobot_accel_close(void);
@@ -30,7 +32,6 @@ extern void dinobot_accel_fill(
 extern bool dinobot_accel_has_alphablending();
 #endif
 
-gAccel *gAccel::instance;
 #define BCM_ACCEL
 
 #ifdef BCM_ACCEL
