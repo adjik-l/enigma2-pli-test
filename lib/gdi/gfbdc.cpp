@@ -1,3 +1,4 @@
+
 #include <lib/gdi/gfbdc.h>
 
 #include <lib/base/init.h>
@@ -7,30 +8,12 @@
 
 #include <time.h>
 
-#ifdef USE_LIBVUGLES2
-#include <vuplus_gles.h>
-#endif
-
-#ifdef HAVE_OSDANIMATION
-#include <lib/base/cfile.h>
-#endif
-
-#ifdef CONFIG_ION
-extern void bcm_accel_blit(
-		int src_addr, int src_width, int src_height, int src_stride, int src_format,
-		int dst_addr, int dst_width, int dst_height, int dst_stride,
-		int src_x, int src_y, int width, int height,
-		int dst_x, int dst_y, int dwidth, int dheight,
-		int pal_addr, int flags);
-#endif
-
 gFBDC::gFBDC()
 {
 	fb=new fbClass;
-#ifndef CONFIG_ION
+
 	if (!fb->Available())
 		eFatal("[gFBDC] no framebuffer available");
-#endif
 
 	int xres;
 	int yres;
@@ -161,69 +144,8 @@ void gFBDC::exec(const gOpcode *o)
 		break;
 	}
 	case gOpcode::flush:
-#ifdef USE_LIBVUGLES2
-		if (gles_is_animation())
-			gles_do_animation();
-		else
-			fb->blit();
-#else
 		fb->blit();
-#endif
-#ifdef CONFIG_ION
-		if (surface_back.data_phys)
-		{
-			gUnmanagedSurface s(surface);
-			surface = surface_back;
-			surface_back = s;
-
-			fb->waitVSync();
-			if (surface.data_phys > surface_back.data_phys)
-			{
-				fb->setOffset(0);
-			}
-			else
-			{
-				fb->setOffset(surface_back.y);
-			}
-			bcm_accel_blit(
-				surface_back.data_phys, surface_back.x, surface_back.y, surface_back.stride, 0,
-				surface.data_phys, surface.x, surface.y, surface.stride,
-				0, 0, surface.x, surface.y,
-				0, 0, surface.x, surface.y,
-				0, 0);
-		}
-#endif
 		break;
-	case gOpcode::sendShow:
-	{
-#ifdef HAVE_OSDANIMATION
-		CFile::writeIntHex("/proc/stb/fb/animation_mode", 0x01);
-#endif
-#ifdef USE_LIBVUGLES2
-		gles_set_buffer((unsigned int *)surface.data);
-		gles_set_animation(1, o->parm.setShowHideInfo->point.x(), o->parm.setShowHideInfo->point.y(), o->parm.setShowHideInfo->size.width(), o->parm.setShowHideInfo->size.height());
-#endif
-		break;
-	}
-	case gOpcode::sendHide:
-	{
-#ifdef HAVE_OSDANIMATION
-		CFile::writeIntHex("/proc/stb/fb/animation_mode", 0x10);
-#endif
-#ifdef USE_LIBVUGLES2
-		gles_set_buffer((unsigned int *)surface.data);
-		gles_set_animation(0, o->parm.setShowHideInfo->point.x(), o->parm.setShowHideInfo->point.y(), o->parm.setShowHideInfo->size.width(), o->parm.setShowHideInfo->size.height());
-#endif
-		break;
-	}
-#ifdef USE_LIBVUGLES2
-	case gOpcode::setView:
-	{
-		gles_viewport(o->parm.setViewInfo->size.width(), o->parm.setViewInfo->size.height(), fb->Stride());
-		break;
-	}
-#endif
-
 	default:
 		gDC::exec(o);
 		break;
@@ -256,39 +178,20 @@ void gFBDC::setGamma(int g)
 
 void gFBDC::setResolution(int xres, int yres, int bpp)
 {
-#if defined(__sh__)
-	/* if xres and yres are negative call SetMode with the lates xres and yres
-	 * we need that to read the new screen dimesnions after a resolution change
-	 * without changing the frambuffer dimensions
-	 */
-	if (xres<0 && yres<0 ) {
-		fb->SetMode(surface.x, surface.y, bpp);
-		return;
-	}
-#else
 	if (m_pixmap && (surface.x == xres) && (surface.y == yres) && (surface.bpp == bpp))
 		return;
-#endif
-#ifndef CONFIG_ION
+
 	if (gAccel::getInstance())
 		gAccel::getInstance()->releaseAccelMemorySpace();
-#endif
+
 	fb->SetMode(xres, yres, bpp);
 
-#if defined(__sh__)
-	for (int y = 0; y<yres; y++) { // make whole screen transparent
-		memset(fb->lfb+y*fb->Stride(), 0x00, fb->Stride());
-	}
-#endif
 	surface.x = xres;
 	surface.y = yres;
 	surface.bpp = bpp;
 	surface.bypp = bpp / 8;
 	surface.stride = fb->Stride();
 	surface.data = fb->lfb;
-	
-	for (int y=0; y<yres; y++)    // make whole screen transparent 
-		memset(fb->lfb+ y * xres * 4, 0x00, xres * 4);	
 
 	surface.data_phys = fb->getPhysAddr();
 
@@ -307,20 +210,17 @@ void gFBDC::setResolution(int xres, int yres, int bpp)
 		surface_back.data_phys = 0;
 	}
 
-	eDebug("[gFBDC] resolution: %d x %d x %d (stride: %d) pages: %d", surface.x, surface.y, surface.bpp, fb->Stride(), fb->getNumPages());
+	eDebug("[gFBDC] resolution: %dx%dx%d stride=%d, %dkB available for acceleration surfaces.",
+		 surface.x, surface.y, surface.bpp, fb->Stride(), (fb->Available() - fb_size)/1024);
 
-#ifndef CONFIG_ION
-	/* accel is already set in fb.cpp */
-	eDebug("[gFBDC] %dkB available for acceleration surfaces.", (fb->Available() - fb_size)/1024);
 	if (gAccel::getInstance())
 		gAccel::getInstance()->setAccelMemorySpace(fb->lfb + fb_size, surface.data_phys + fb_size, fb->Available() - fb_size);
-#endif
 
 	if (!surface.clut.data)
 	{
 		surface.clut.colors = 256;
 		surface.clut.data = new gRGB[surface.clut.colors];
-		memset(surface.clut.data, 0, sizeof(*surface.clut.data)*surface.clut.colors);
+		memset(static_cast<void*>(surface.clut.data), 0, sizeof(*surface.clut.data)*surface.clut.colors);
 	}
 
 	surface_back.clut = surface.clut;
@@ -343,59 +243,3 @@ void gFBDC::reloadSettings()
 }
 
 eAutoInitPtr<gFBDC> init_gFBDC(eAutoInitNumbers::graphic-1, "GFBDC");
-
-#ifdef HAVE_OSDANIMATION
-void setAnimation_current(int a) {
-	switch (a) {
-		case 1:
-			CFile::writeStr("/proc/stb/fb/animation_current", "simplefade");
-			break;
-		case 2:
-			CFile::writeStr("/proc/stb/fb/animation_current", "simplezoom");
-			break;
-		case 3:
-			CFile::writeStr("/proc/stb/fb/animation_current", "growdrop");
-			break;
-		case 4:
-			CFile::writeStr("/proc/stb/fb/animation_current", "growfromleft");
-			break;
-		case 5:
-			CFile::writeStr("/proc/stb/fb/animation_current", "extrudefromleft");
-			break;
-		case 6:
-			CFile::writeStr("/proc/stb/fb/animation_current", "popup");
-			break;
-		case 7:
-			CFile::writeStr("/proc/stb/fb/animation_current", "slidedrop");
-			break;
-		case 8:
-			CFile::writeStr("/proc/stb/fb/animation_current", "slidefromleft");
-			break;
-		case 9:
-			CFile::writeStr("/proc/stb/fb/animation_current", "slidelefttoright");
-			break;
-		case 10:
-			CFile::writeStr("/proc/stb/fb/animation_current", "sliderighttoleft");
-			break;
-		case 11:
-			CFile::writeStr("/proc/stb/fb/animation_current", "slidetoptobottom");
-			break;
-		case 12:
-			CFile::writeStr("/proc/stb/fb/animation_current", "zoomfromleft");
-			break;
-		case 13:
-			CFile::writeStr("/proc/stb/fb/animation_current", "zoomfromright");
-			break;
-		case 14:
-			CFile::writeStr("/proc/stb/fb/animation_current", "stripes");
-			break;
-		default:
-			CFile::writeStr("/proc/stb/fb/animation_current", "disable");
-			break;
-	}
-}
-
-void setAnimation_speed(int speed) {
-	CFile::writeInt("/proc/stb/fb/animation_speed", speed);
-}
-#endif
