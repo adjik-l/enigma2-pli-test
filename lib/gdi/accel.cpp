@@ -16,6 +16,12 @@
 
 gAccel *gAccel::instance;
 
+#if not defined(HAVE_HISILICON_ACCEL)
+#define BCM_ACCEL
+#else
+#endif
+#endif
+
 #ifdef HAVE_HISILICON_ACCEL 
 extern int  dinobot_accel_init(void);
 extern void dinobot_accel_close(void);
@@ -31,8 +37,6 @@ extern void dinobot_accel_fill(
 		unsigned long color);
 extern bool dinobot_accel_has_alphablending();
 #endif
-
-#define BCM_ACCEL
 
 #ifdef BCM_ACCEL
 extern int bcm_accel_init(void);
