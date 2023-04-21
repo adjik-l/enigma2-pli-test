@@ -1,4 +1,3 @@
-
 #include <lib/gdi/gfbdc.h>
 
 #include <lib/base/init.h>
